@@ -14,7 +14,7 @@ import PageDropdown from "./PageDropdown";
 const oidcConfig = {
   authority: "https://ifsgcsc2-d02.demo.ifs.cloud/auth/realms/gcc2d021",
   client_id: "digisigns",
-  redirect_uri: "https://ifs-demo.netlify.app/callback",
+  redirect_uri: "https://staging.d3oemd05n9w408.amplifyapp.com/callback",
   response_type: "code",
   scope: "openid microprofile-jwt",
   post_logout_redirect_uri: "https://ifsgcsc2-d02.demo.ifs.cloud/redirect",
