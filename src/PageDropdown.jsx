@@ -19,15 +19,13 @@ const PageDropdown = ({ accessToken }) => {
     setLoading(true);
     try {
       const response = await axios.get(
-        "https://ifsgcsc2-d02.demo.ifs.cloud/main/ifsapplications/projection/v1/LobbyConfiguration.svc/LobbyPresObjects",
+        "https://ifsgcsc2-d02.demo.ifs.cloud/main/ifsapplications/projection/v1/FrameworkServices.svc/GetApplicationName()",
         {
           headers: {
             Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
             Accept: "application/json",
-            "X-Ifs-Lobby": true,
           },
-          withCredentials: true, // Ensures cookies (if any) are included
         }
       );
 

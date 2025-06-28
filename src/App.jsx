@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Modal, Spin, message, Input, Button } from "antd";
+import { message, Spin } from "antd";
+import { LoadingOutlined } from "@ant-design/icons";
 import { UserManager } from "oidc-client-ts";
 import {
   BrowserRouter as Router,
@@ -7,189 +8,197 @@ import {
   Route,
   useNavigate,
 } from "react-router-dom";
-import { jwtDecode } from "jwt-decode";
-import PageDropdown from "./PageDropdown";
 
-// OIDC Configuration - Updated for Your Client
 const oidcConfig = {
   authority: "https://ifsgcsc2-d02.demo.ifs.cloud/auth/realms/gcc2d021",
-  client_id: "digisigns",
+  client_id: "IFS_digisigns",
   redirect_uri: "https://ifs-demo.netlify.app/callback",
   response_type: "code",
   scope: "openid microprofile-jwt",
   post_logout_redirect_uri: "https://ifsgcsc2-d02.demo.ifs.cloud/redirect",
 };
 
+const BASE_URL = "https://api.v2.digisigns.in/api/v1";
+
 const userManager = new UserManager(oidcConfig);
 
 function App() {
-  const [isModalVisible, setIsModalVisible] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
   const [tokens, setTokens] = useState(null);
-  const [decodedToken, setDecodedToken] = useState(null);
-  const [jsCode, setJsCode] = useState("");
+  const [lobbies, setLobbies] = useState([]);
+  const [loadingLobbies, setLoadingLobbies] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const handleLogin = () => {
-    setIsModalVisible(true);
-    userManager.signinRedirect();
+  const handleLogin = () => userManager.signinRedirect();
+  const handleLogout = () => userManager.signoutRedirect();
+
+  const refreshTokens = async () => {
+    setRefreshing(true);
+    try {
+      const res = await fetch(
+        `https://ifsgcsc2-d02.demo.ifs.cloud/auth/realms/gcc2d021/protocol/openid-connect/token`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_id: "IFS_digisigns",
+            refresh_token: tokens.refresh_token,
+            grant_type: "refresh_token",
+          }),
+        }
+      );
+
+      const result = await res.json();
+      console.log("Refresh Response:", result);
+
+      if (result?.data?.access_token) {
+        setTokens({
+          access_token: result.data.access_token,
+          refresh_token: result.data.refresh_token,
+        });
+        message.success("Token refreshed!");
+      } else {
+        message.error(result.message || "Token refresh failed.");
+      }
+    } catch (err) {
+      console.error("Token refresh error:", err);
+      message.error("Error refreshing token.");
+    } finally {
+      setRefreshing(false);
+    }
   };
 
-  const handleLogout = () => {
-    userManager.signoutRedirect();
+  const fetchLobbies = async () => {
+    if (!tokens?.access_token) return;
+
+    setLoadingLobbies(true);
+    try {
+      const res = await fetch(`${BASE_URL}/ifs/ifs-lobbies`, {
+        headers: {
+          Authorization: `Bearer ${tokens.access_token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const result = await res.json();
+
+      if (res.ok && result?.data?.pages) {
+        setLobbies(result.data.pages);
+        message.success("Lobbies fetched");
+      } else {
+        message.error(result.message || "Failed to fetch lobbies.");
+      }
+    } catch (err) {
+      console.error("Lobby fetch error:", err);
+      message.error("Network error while fetching lobbies.");
+    } finally {
+      setLoadingLobbies(false);
+    }
   };
 
   useEffect(() => {
-    userManager.getUser().then((loggedInUser) => {
-      if (loggedInUser) {
-        setUser(loggedInUser);
+    userManager.getUser().then((u) => {
+      if (u) {
+        setUser(u);
         setTokens({
-          access_token: loggedInUser.access_token,
-          refresh_token: loggedInUser.refresh_token,
-          id_token: loggedInUser.id_token,
+          access_token: u.access_token,
+          refresh_token: u.refresh_token,
         });
-
-        const decoded = jwtDecode(loggedInUser.id_token);
-        setDecodedToken(decoded);
-
-        // Generate JS Code for Copy
-        generateJsCode(loggedInUser.id_token, decoded.sub, decoded.sid);
-        message.success("Login successful!");
-      } else {
-        setUser(null);
-        setTokens(null);
-        setDecodedToken(null);
-        setJsCode("");
       }
     });
   }, []);
 
-  const generateJsCode = (refreshToken, sub, sid) => {
-    const generatedJsCode = `
-(function() {
-  const cookies = {
-    KEYCLOAK_IDENTITY: '${refreshToken}',
-    KEYCLOAK_IDENTITY_LEGACY: '${refreshToken}',
-    KEYCLOAK_SESSION: '"gcc2d011/${sub}/${sid}"',
-    KEYCLOAK_SESSION_LEGACY: '"gcc2d011/${sub}/${sid}"'
-  };
+  useEffect(() => {
+    if (tokens?.access_token) fetchLobbies();
+  }, [tokens]);
 
-  Object.entries(cookies).forEach(([name, val]) => {
-    document.cookie = \`\${name}=\${val}; path=/auth/realms/gcc2d011/; domain=ifsgcsc2-d01.demo.ifs.cloud; Secure; SameSite=None;\`;
-  });
-
-  window.location.reload();
-})();
-    `.trim();
-    setJsCode(generatedJsCode);
-  };
-
-  const copyJsCode = () => {
-    navigator.clipboard.writeText(jsCode).then(() => {
-      message.success("JavaScript code copied to clipboard!");
-    });
-  };
+  const antIcon = <LoadingOutlined style={{ fontSize: 24 }} spin />;
 
   return (
     <Router>
-      <div className="min-h-screen w-[100vw] flex flex-col items-center justify-center bg-gray-900 text-white">
-        <h2 className="text-3xl font-bold mb-4">IFS Login Demo with OIDC</h2>
-        {!user ? (
-          <button
-            className="px-6 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition"
-            onClick={handleLogin}
-          >
-            Login
-          </button>
-        ) : (
-          <div className="w-full max-w-5xl mt-5 p-4 bg-gray-800 text-white shadow-md rounded-lg">
-            <h3 className="text-xl font-semibold mb-4">
-              Welcome, {user.profile?.preferred_username || "User"}
-            </h3>
-            <button
-              className="px-6 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition mb-4"
-              onClick={handleLogout}
-            >
-              Logout
-            </button>
-            <div className="mt-4">
-              <h4 className="text-lg font-bold mb-2">Select a Page:</h4>
-              <PageDropdown accessToken={tokens?.access_token} />
+      <div className="min-h-screen w-[100vw] bg-gray-50 p-4">
+        <div className="max-w-5xl mx-auto">
+          {user ? (
+            <>
+              <div className="flex justify-between items-center mb-6 w-">
+                <div className="space-x-3 flex items-center gap-2">
+                  <button
+                    onClick={handleLogout}
+                    className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition"
+                  >
+                    Logout
+                  </button>
+                </div>
+                <div className="text-lg text-gray-700 font-medium">
+                  USERNAME : {user.profile?.preferred_username}
+                </div>
+                <button
+                  style={{
+                    background: "white",
+                    outline: "none",
+                    border: "none",
+                  }}
+                  onClick={refreshTokens}
+                  disabled={refreshing}
+                >
+                  {refreshing && <Spin indicator={antIcon} size="small" />}
+                  {!refreshing && "Refresh Token"}
+                </button>
+              </div>
+              <div>
+                <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+                  Lobbies
+                </h2>
+                {loadingLobbies ? (
+                  <div className="flex justify-center items-center py-20">
+                    <Spin indicator={antIcon} tip="Loading lobbies..." />
+                  </div>
+                ) : lobbies.length === 0 ? (
+                  <div className="text-gray-500">No lobbies found.</div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {lobbies.map((lobby, index) => (
+                      <div key={index} className="p-4 bg-white shadow rounded">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                          {lobby.pageTitle}
+                        </h3>
+                        <p className="text-xs text-gray-500">
+                          Page ID: {lobby.pageId}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          Keywords: {lobby.keywords || "N/A"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="text-center py-20">
+              <h1 className="text-3xl font-bold mb-6 text-gray-800">
+                IFS Login
+              </h1>
+              <button
+                onClick={handleLogin}
+                className="bg-blue-600 text-white px-6 py-3 rounded hover:bg-blue-700 transition"
+              >
+                Login
+              </button>
             </div>
-            <div className="mt-4">
-              <h4 className="text-lg font-bold mb-2">
-                Decoded Token Information:
-              </h4>
-              <pre className="overflow-auto bg-gray-700 p-4 rounded text-sm max-h-96">
-                {decodedToken
-                  ? JSON.stringify(decodedToken, null, 2)
-                  : "No token data available"}
-              </pre>
-            </div>
-
-            <div className="mt-4">
-              <h4 className="text-lg font-bold mb-2">Raw Token Information:</h4>
-              <pre className="overflow-auto bg-gray-700 p-4 rounded text-sm max-h-96">
-                {tokens
-                  ? JSON.stringify(tokens, null, 2)
-                  : "No token data available"}
-              </pre>
-            </div>
-
-            <div className="mt-4">
-              <h4 className="text-lg font-bold mb-2">JavaScript Code:</h4>
-              <Input.TextArea
-                value={jsCode}
-                rows={10}
-                readOnly
-                className="bg-gray-700 text-white"
-              />
-              <Button type="primary" className="mt-2" onClick={copyJsCode}>
-                Copy JavaScript Code
-              </Button>
-            </div>
-          </div>
-        )}
-
-        <Modal
-          title="IFS Login"
-          open={isModalVisible}
-          footer={null}
-          closable={false}
-          maskClosable={false}
-          className="w-full max-w-lg"
-        >
-          <div className="flex justify-center items-center flex-col">
-            <Spin spinning={loading} size="large" />
-            <p className="mt-4 text-white">Loading IFS Login Page...</p>
-          </div>
-        </Modal>
+          )}
+        </div>
+        <Routes>
+          <Route
+            path="/callback"
+            element={<Callback setUser={setUser} setTokens={setTokens} />}
+          />
+        </Routes>
       </div>
-      <Routes>
-        <Route path="/" element={<AppContent user={user} />} />
-        <Route
-          path="/callback"
-          element={<Callback setUser={setUser} setTokens={setTokens} />}
-        />
-      </Routes>
     </Router>
   );
 }
 
-// Separate Component for Main Content
-function AppContent({ user }) {
-  return (
-    <div className="flex flex-col items-center mt-10">
-      {!user ? (
-        <p>Please login to continue.</p>
-      ) : (
-        <p>Welcome to the IFS OIDC Demo.</p>
-      )}
-    </div>
-  );
-}
-
-// Callback Component for OIDC Redirect Handling
 function Callback({ setUser, setTokens }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -197,26 +206,24 @@ function Callback({ setUser, setTokens }) {
   useEffect(() => {
     userManager
       .signinRedirectCallback()
-      .then((user) => {
-        setLoading(false);
-        setUser(user);
+      .then((u) => {
+        setUser(u);
         setTokens({
-          access_token: user.access_token,
-          refresh_token: user.refresh_token,
-          id_token: user.id_token,
+          access_token: u.access_token,
+          refresh_token: u.refresh_token,
         });
         navigate("/");
       })
-      .catch((error) => {
-        setLoading(false);
+      .catch(() => {
+        message.error("Login failed.");
         navigate("/");
-        message.error("Login failed. Please try again.");
-      });
+      })
+      .finally(() => setLoading(false));
   }, [navigate, setUser, setTokens]);
 
   return (
-    <div className="flex flex-col items-center mt-10">
-      {loading ? <Spin size="large" /> : <p>Redirecting...</p>}
+    <div className="flex items-center justify-center min-h-screen">
+      {loading ? <Spin size="large" /> : <h2>Redirecting...</h2>}
     </div>
   );
 }
